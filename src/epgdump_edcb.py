@@ -23,8 +23,8 @@ def create_argparser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="""example:
     epgdump_edcb.py -s SETTING_FILE
     epgdump_edcb.py [-f] -a -i INPUT_DIR -of OUTPUT_FILE
-    epgdump_edcb.py [-f] -a -i INPUT_DIR -od OUTPUT_DIR [-k1 all]
-    epgdump_edcb.py [-f] -i INPUT_DIR -od OUTPUT_DIR [-kb bs] [-kc1 cs1] [-kc2 cs2] [-kg gr]""",
+    epgdump_edcb.py [-f] -a -i INPUT_DIR -od OUTPUT_DIR
+    epgdump_edcb.py [-f] -i INPUT_DIR -od OUTPUT_DIR""",
                                      formatter_class=argparse.RawTextHelpFormatter)
     parser.print_usage = parser.print_help  # overwrite usage by full help
     parser.add_argument('-a', '--all', action='store_true',
