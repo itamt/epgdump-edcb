@@ -1,0 +1,1 @@
+-e git+https://github.com/itamt/epgdump_py.git#egg=epgdump_py-1.0.0
