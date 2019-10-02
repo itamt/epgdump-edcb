@@ -109,10 +109,10 @@ def main():
             sys.exit(1)
     else:
         try:
-            epg_dir = Path(args.input_dir.name)
-            out_dir = Path(args.output_dir.name) if args.output_dir else None
+            epg_dir = Path(args.input_dir)
+            out_dir = Path(args.output_dir) if args.output_dir else None
             out_name_fmt = DEFAULT_OUT_NAME_FMT
-            out_file: Optional[Path] = Path(args.output_file.name) if args.output_file else None
+            out_file: Optional[Path] = Path(args.output_file) if args.output_file else None
             pretty_print = bool(args.format)
             merge_all = bool(args.all)
         except Exception:
