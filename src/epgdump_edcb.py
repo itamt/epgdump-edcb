@@ -3,7 +3,6 @@ import os
 import glob
 import ast
 import argparse
-import itertools
 import traceback
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -11,7 +10,7 @@ import xml.dom.minidom
 from xml.etree.ElementTree import ElementTree
 from dataclasses import dataclass
 from logging import getLogger, StreamHandler
-from typing import List, Tuple, Dict, Optional, Iterable
+from typing import List, Tuple, Dict, Optional, Union
 
 from tqdm import tqdm
 
@@ -22,6 +21,7 @@ from epgdump_py.constant import ONID_BS, ONID_CS1, ONID_CS2
 
 # region 設定
 DEFAULT_OUT_NAME_FMT = 'epgdump_edcb_{key}.xml'
+LINE_ENDING = '\n'  # TODO: \r\n にすると2回改行される
 # endregion 設定
 
 logger = getLogger(__name__)
@@ -34,6 +34,46 @@ class DatFile:
     type: str
     key: str
     channel_id: Optional[str]
+
+
+class TvXmlBuilder:
+    _ch: str
+    _pg: str
+    _pretty_print: bool
+    count: int
+
+    def __init__(self, pretty_print: bool = False):
+        self._ch = ''
+        self._pg = ''
+        self._pretty_print = pretty_print
+        self.count = 0
+
+    def add(self, xml_et: ElementTree) -> None:
+        """XMLを文字列検索でマージして文字列で返す
+
+        オブジェクトのままマージするのが面倒なのとマージしたXMLをオブジェクトにするとメモリを食うので
+        """
+
+        x_str = ET.tostring(xml_et.getroot(), encoding='utf-8').decode('utf-8')
+        if self._pretty_print:
+            x_str = format_xml(x_str, ret_type=str, newl=LINE_ENDING)
+        ch_start = x_str.index('<channel')
+        ch_end = x_str.index('<programme')
+        pg_start = x_str.index('<programme')
+        pg_end = x_str.index('</tv>')
+        self._ch += x_str[ch_start:ch_end]
+        self._pg += x_str[pg_start:pg_end]
+        self.count += 1
+
+    @property
+    def content(self) -> str:
+        if self._pretty_print:
+            return '<?xml version="1.0" encoding="utf-8"?><tv>' \
+                   + LINE_ENDING + self._ch \
+                   + LINE_ENDING + self._pg \
+                   + LINE_ENDING + '</tv>'
+        else:
+            return '<?xml version="1.0" encoding="utf-8"?><tv>' + self._ch + self._pg + '</tv>'
 
 
 def create_argparser() -> argparse.ArgumentParser:
@@ -74,37 +114,13 @@ def pick_dat_id(dat_path: Path) -> Tuple[int, int]:
     return onid, tsid
 
 
-def write_xml(xml_str: str, filepath: Path, pretty_print: bool) -> None:
-    """XMLをファイルに書き込む
-
-    """
-    if pretty_print:
-        with filepath.open(mode='wb') as f:
-            xml_bytes = xml.dom.minidom.parseString(xml_str.encode('utf-8')).toprettyxml(indent='  ', encoding='utf-8')
-            f.write(xml_bytes)
+def format_xml(xml_str: str, ret_type: type = bytes, newl: str = '\n') -> Union[bytes, str]:
+    xml_bytes: bytes = xml.dom.minidom.parseString(xml_str.encode('utf-8')).toprettyxml(
+        indent='  ', encoding='utf-8', newl=newl)
+    if ret_type is bytes:
+        return xml_bytes
     else:
-        with filepath.open(mode='w', encoding='utf-8') as f:
-            f.write(xml_str)
-
-
-def merge_xml(xmls: Iterable[ElementTree]) -> str:
-    """XMLを文字列検索でマージして文字列で返す
-
-    オブジェクトのままマージするのが面倒だったため
-    """
-    content = '<?xml version="1.0" encoding="utf-8"?><tv>'
-    ch = ''
-    pg = ''
-    for xml_et in xmls:
-        x_str = ET.tostring(xml_et.getroot(), encoding='utf-8').decode('utf-8')
-        ch_start = x_str.index('<ch')
-        ch_end = x_str.index('<programme')
-        pg_start = x_str.index('<programme')
-        pg_end = x_str.index('</tv>')
-        ch += x_str[ch_start:ch_end]
-        pg += x_str[pg_start:pg_end]
-    content += ch + pg + '</tv>'
-    return content
+        return xml_bytes.decode('utf-8')
 
 
 def main():
@@ -122,8 +138,8 @@ def main():
             out_dir = Path(settings['OUT_DIR'])
             out_name_fmt = settings['OUT_NAME_FMT']
             out_file = None
-            pretty_print: bool = settings['PRETTY_PRINT']
-            merge_all: bool = settings['MERGE_ALL']
+            pretty_print = bool(settings['PRETTY_PRINT'])
+            merge_all = bool(settings['MERGE_ALL'])
         except Exception:
             logger.error(f"Failed to load setting file. {traceback.format_exc(chain=False)}")
             sys.exit(1)
@@ -140,10 +156,10 @@ def main():
             sys.exit(1)
 
     logger.info('Prameters:\n'
-          f"  mode: {'merge_all' if merge_all else 'merge_group'}\n"
-          f"  format: {str(pretty_print).lower()}\n"
-          f"  input: {epg_dir}\n"
-          f"  output: {out_file or out_dir}")
+                f"  mode: {'merge_all' if merge_all else 'merge_group'}\n"
+                f"  format: {str(pretty_print).lower()}\n"
+                f"  input: {epg_dir}\n"
+                f"  output: {out_file or out_dir}")
 
     has_err = False
     if not epg_dir.exists():
@@ -204,38 +220,32 @@ def main():
                           type=b_type, key=key, channel_id=channel_id)
         target_dats.append(datfile)
 
-    # datからXML取得
-    xmls_map: Dict[str, List[ElementTree]] = {
-        'gr': [],
-        'bs': [],
-        'cs1': [],
-        'cs2': [],
+    merged_xml_map = {
+        'all': TvXmlBuilder(pretty_print),
+        'gr': TvXmlBuilder(pretty_print),
+        'bs': TvXmlBuilder(pretty_print),
+        'cs1': TvXmlBuilder(pretty_print),
+        'cs2': TvXmlBuilder(pretty_print),
     }
     with tqdm(total=sum(x.size for x in target_dats)) as progress_bar:
         for dat in target_dats:
+            # datからXML取得
             progress_bar.set_description(f"current: {dat.path.name}")
             with TransportStreamFile(str(dat.path), 'rb') as tsfile:
                 service, events = parse_ts(dat.type, tsfile, debug=False)
             xml_et = create_xml(dat.type, dat.channel_id, service, events)
-            xmls_map[dat.key].append(xml_et)
+
+            # マージ
+            key = 'all' if merge_all else dat.key
+            merged_xml_map[key].add(xml_et)
             progress_bar.update(dat.size)
 
-    logger.info(f"merging xml...")
-    if merge_all:
-        # 1ファイルにまとめる
-        xmls = itertools.chain(*xmls_map.values())  # flatten List[list]
-        merged_xml: str = merge_xml(xmls)
-
-        outpath = get_outpath(key='all')
-        write_xml(merged_xml, outpath, pretty_print)
-        print(f"output: {outpath}")
-    else:
-        # 放送タイプごとに出力する
-        for key, xmls in xmls_map.items():
-            merged_xml: str = merge_xml(xmls)
-
+    # ファイル出力
+    for key, merged_xml in merged_xml_map.items():
+        if merged_xml.count > 0:
             outpath = get_outpath(key=key)
-            write_xml(merged_xml, outpath, pretty_print)
+            with outpath.open(mode='w', encoding='utf-8') as f:
+                f.write(merged_xml.content)
             print(f"output: {outpath}")
 
 
