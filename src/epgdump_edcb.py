@@ -3,6 +3,7 @@ import glob
 import ast
 import argparse
 import itertools
+import traceback
 from pathlib import Path
 import xml.etree.ElementTree as ET
 import xml.dom.minidom
@@ -95,7 +96,7 @@ def main():
     args = argparser.parse_args()
 
     if args.setting_file:
-        print(f"loading settings from {args.setting_file.name}")
+        print(f"load settings from {args.setting_file.name}")
         try:
             settings = ast.literal_eval(args.setting_file.read())
             epg_dir = Path(settings['EPG_DIR'])
@@ -105,7 +106,7 @@ def main():
             pretty_print: bool = settings['PRETTY_PRINT']
             merge_all: bool = settings['MERGE_ALL']
         except Exception:
-            print(f"failed to load setting file. something is invalid.", file=sys.stderr)
+            print(f"Failed to load setting file. {traceback.format_exc(chain=False)}", file=sys.stderr)
             sys.exit(1)
     else:
         try:
@@ -116,14 +117,25 @@ def main():
             pretty_print = bool(args.format)
             merge_all = bool(args.all)
         except Exception:
-            print(f"some parameters are invalid.", file=sys.stderr)
+            print(f"Some parameters are invalid. {traceback.format_exc(chain=False)}", file=sys.stderr)
             sys.exit(1)
 
     print('Prameters:',
           f"  mode: {'merge_all' if merge_all else 'merge_group'}",
           f"  format: {str(pretty_print).lower()}",
           f"  input: {epg_dir}",
+          f"  output: {out_file or out_dir}",
           sep='\n')
+
+    has_err = False
+    if not epg_dir.exists():
+        print(f"input directory not exists: {epg_dir}", file=sys.stderr)
+        has_err = True
+    if (out_file and not out_file.parent.exists()) or (out_file is None and not out_dir.exists()):
+        print(f"output directory not exists", file=sys.stderr)
+        has_err = True
+    if has_err:
+        sys.exit(1)
 
     def get_outpath(key: str) -> Path:
         if merge_all and out_file:
@@ -131,6 +143,10 @@ def main():
         return out_dir / out_name_fmt.format(key=key)
 
     dat_paths: List[Path] = [Path(x) for x in glob.glob(f"{epg_dir}/*_epg.dat")]
+
+    if len(dat_paths) == 0:
+        print('*_epg.dat not found', file=sys.stderr)
+        sys.exit(1)
 
     xmls_map: Dict[str, List[ElementTree]] = {
         'gr': [],
